@@ -231,7 +231,8 @@ void doit(int t) {
   int bytesleft;
   char envbuf[8192];
   int ret;
-  stralloc dnserror = {0};
+  static stralloc dnserror_soft = {0};
+  static stralloc dnserror_hard = {0};
   char *bannerok;
   char *bannererr;
   static char bdelay[] = "0";
@@ -256,24 +257,51 @@ void doit(int t) {
   else                         /* IPv4 address */
     remoteipstr[ip6_compactaddr(remoteipstr,remoteip)] = 0;
 
-  if (flagremotehost)
-    if (dns_name6(&remotehostsa,remoteip) == 0)
-    if (remotehostsa.len) {
-      if (flagparanoid) {
-        verifyhost = remoteipstr;
-        if (dns_ip6(&tmp,&remotehostsa) == 0)
-          for (j = 0;j + 16 <= tmp.len;j += 16)
-            if (byte_equal(remoteip,16,tmp.s + j)) {
-              flagparanoid = 0;
-              break;
+  if (!stralloc_copys(&dnserror_soft, "")) drop_nomem();
+  if (!stralloc_copys(&dnserror_hard, "")) drop_nomem();
+
+  if (flagremotehost) {
+    if (dns_name6(&remotehostsa,remoteip) == -1) {
+      if (!stralloc_copys(&dnserror_soft, "PTR record")) drop_nomem();
+      if (!stralloc_0(&dnserror_soft)) drop_nomem();
+    } else {
+      if (remotehostsa.len == 0) {
+        if (!stralloc_copys(&dnserror_hard, "PTR record")) drop_nomem();
+        if (!stralloc_0(&dnserror_hard)) drop_nomem();
+      } else {
+        if (flagparanoid) {
+          verifyhost = remoteipstr;
+          if (dns_ip6(&tmp,&remotehostsa) == -1) {
+            if (!stralloc_copys(&dnserror_soft, "A/AAAA record for ")) drop_nomem();
+            if (!stralloc_cat(&dnserror_soft, &remotehostsa)) drop_nomem();
+            if (!stralloc_0(&dnserror_soft)) drop_nomem();
+          } else {
+            if (tmp.len == 0) {
+              if (!stralloc_copys(&dnserror_hard, "A/AAAA record for ")) drop_nomem();
+              if (!stralloc_cat(&dnserror_hard, &remotehostsa)) drop_nomem();
+              if (!stralloc_0(&dnserror_hard)) drop_nomem();
+            } else {
+              for (j = 0;j + 16 <= tmp.len;j += 16) {
+                if (byte_equal(remoteip,16,tmp.s + j)) {
+                  flagparanoid = 0;
+                  break;
+                }
+              }
+              if (flagparanoid) {
+                if (!stralloc_copys(&dnserror_hard, "matching A/AAAA record")) drop_nomem();
+                if (!stralloc_0(&dnserror_hard)) drop_nomem();
+              }
+            }
           }
-      }
-      if (!flagparanoid) {
-        if (!stralloc_0(&remotehostsa)) drop_nomem();
-          remotehost = remotehostsa.s;
-          verifyhost = remotehostsa.s;
+          if (!flagparanoid) {
+            if (!stralloc_0(&remotehostsa)) drop_nomem();
+            remotehost = remotehostsa.s;
+            verifyhost = remotehostsa.s;
+          }
+        }
       }
     }
+  }
 
   switch((childpid=fork())) {
     case -1:
@@ -489,6 +517,11 @@ void doit(int t) {
     env("TCPLOCALPORT",localportstr);
     env("TCPLOCALHOST",localhost);
   }
+
+  if (dnserror_soft.len)
+    env("DNSSOFT", dnserror_soft.s);
+  if (dnserror_hard.len)
+    env("DNSHARD", dnserror_hard.s);
 
   env("SSLREMOTEIP",remoteipstr);
   env("SSLREMOTEPORT",remoteportstr);
