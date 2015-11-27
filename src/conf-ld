@@ -1,0 +1,7 @@
+gcc
+
+gcc
+
+Use this call on a 32 bit architecture.
+
+This will be used to link .o files into an executable.
